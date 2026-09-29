@@ -24,7 +24,7 @@ jobs:
 
       - name: Extract Android project
         run: |
-          unzip -q Real_Time_Inspector_Android_QR_v1.zip
+          unzip -q Real_Time_Inspector_Android_QR_v2.zip
 
       - name: Build Debug APK
         working-directory: Real_Time_Inspector_Android
