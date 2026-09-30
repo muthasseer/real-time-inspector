@@ -22,16 +22,16 @@ jobs:
         with:
           gradle-version: '9.4.1'
 
-      - name: Extract Android project
+      - name: Extract V4 Android project
         run: |
-          unzip -q Real_Time_Inspector_Android_QR_v2.zip
+          unzip -q Real_Time_Inspector_Android_V4_FINAL_Inspector_Profile.zip
 
       - name: Build Debug APK
-        working-directory: Real_Time_Inspector_Android
+        working-directory: rti_android_v4
         run: gradle assembleDebug --no-daemon
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: real-time-inspector-debug-apk
-          path: Real_Time_Inspector_Android/app/build/outputs/apk/debug/*.apk
+          name: real-time-inspector-v4-debug-apk
+          path: rti_android_v4/app/build/outputs/apk/debug/*.apk
