@@ -24,7 +24,7 @@ jobs:
 
       - name: Extract Android V6 project
         run: |
-          unzip -q Real_Time_Inspector_Android_V6_FINAL_FIXED.zip
+          unzip -q Real_Time_Inspector_Android_V7_FINAL.zip
 
       - name: Verify Android project
         run: |
