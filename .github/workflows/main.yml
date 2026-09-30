@@ -24,7 +24,7 @@ jobs:
 
       - name: Extract V4 Android project
         run: |
-          unzip -q Real_Time_Inspector_Android_V4_FINAL_Inspector_Profile_FIXED2.zip
+          unzip -q Real_Time_Inspector_Android_V5_LOGIN_START_INSPECTION.zip
 
       - name: Build Debug APK
         working-directory: rti_android_v4
