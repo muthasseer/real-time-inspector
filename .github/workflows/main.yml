@@ -1,4 +1,4 @@
-name: Build Android APK
+name: Build Android APK V13
 
 on:
   workflow_dispatch:
@@ -6,37 +6,42 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
-      - name: Set up JDK 17
+      - name: Set up Java 17
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Gradle 9.4.1
+      - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.4.1'
 
-      - name: Extract Android V6 project
+      - name: Extract Android.zip and find project root
         run: |
-          unzip -q Android.zip
+          mkdir -p src
+          unzip -q Android.zip -d src
+          SETTINGS=$(find src -name settings.gradle.kts | head -1)
+          test -n "$SETTINGS"
+          ROOT=$(dirname "$SETTINGS")
+          echo "Project root: $ROOT"
+          echo "ROOT=$ROOT" >> "$GITHUB_ENV"
 
-      - name: Verify Android project
+      - name: Verify project
         run: |
-          test -f settings.gradle.kts
-          test -f app/build.gradle.kts
-          test -f app/src/main/java/com/absecuritas/realtimeinspector/MainActivity.kt
+          test -f "$ROOT/app/build.gradle.kts"
+          test -f "$ROOT/app/src/main/java/com/absecuritas/realtimeinspector/MainActivity.kt"
+          grep -n 'versionName' "$ROOT/app/build.gradle.kts"
 
-      - name: Build Debug APK
-        run: gradle assembleDebug --no-daemon
+      - name: Build debug APK
+        run: |
+          cd "$ROOT"
+          gradle --no-daemon --stacktrace :app:assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: real-time-inspector-v6-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
