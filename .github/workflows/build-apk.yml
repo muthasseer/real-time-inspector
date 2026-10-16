@@ -1,0 +1,165 @@
+name: Build AB Securitas Real Time Inspector APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v7
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          accept-android-sdk-licenses: true
+          packages: platform-tools
+
+      - name: Install Android SDK platform and build tools
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Validate source layout and Python syntax
+        id: validate
+        run: |
+          set -euo pipefail
+          project_root="$(python3 - <<'PY'
+          import os
+          import shutil
+          import sys
+          import tempfile
+          import zipfile
+          from pathlib import Path, PurePosixPath
+
+          workspace = Path(os.environ["GITHUB_WORKSPACE"]).resolve()
+          required_files = (
+              "Android/settings.gradle.kts",
+              "Android/app/build.gradle.kts",
+              "Android/app/src/main/java/com/absecuritas/realtimeinspector/AppConfig.kt",
+              "Web/app.py",
+              "ClientPC/app.py",
+              "MobileApiProxy/proxy.py",
+          )
+          skip_dirs = {".git", ".gradle", ".venv", "build", "__pycache__"}
+
+          def find_project_roots(base):
+              for current, dirs, files in os.walk(base):
+                  dirs[:] = [name for name in dirs if name not in skip_dirs]
+                  if Path(current).name == "Android" and "settings.gradle.kts" in files:
+                      yield Path(current).parent.resolve()
+
+          def is_complete(root):
+              return all((root / item).is_file() for item in required_files) and (root / "scripts").is_dir()
+
+          project_root = next((root for root in find_project_roots(workspace) if is_complete(root)), None)
+
+          if project_root is None:
+              archives = sorted(
+                  (item for item in workspace.rglob("*")
+                   if item.is_file() and item.suffix.lower() == ".zip" and ".git" not in item.parts),
+                  key=lambda item: (item.name.lower() != "ab_securitas_rti_master_v22_qr_scanner_fix.zip", item.name.lower()),
+              )
+              for archive_path in archives:
+                  try:
+                      with zipfile.ZipFile(archive_path) as archive:
+                          names = [name.replace("\\", "/").lstrip("./") for name in archive.namelist()]
+                          if not any(name.endswith("Android/settings.gradle.kts") for name in names):
+                              continue
+                          # Keep the extracted Gradle project inside GITHUB_WORKSPACE so setup-gradle can
+                          # discover its build files and calculate a cache key.
+                          extraction_root = Path(tempfile.mkdtemp(prefix="ab-securitas-source-", dir=workspace)).resolve()
+                          for info in archive.infolist():
+                              member = PurePosixPath(info.filename.replace("\\", "/"))
+                              if member.is_absolute() or ".." in member.parts:
+                                  raise ValueError(f"Unsafe ZIP member path: {info.filename}")
+                              destination = (extraction_root / Path(*member.parts)).resolve()
+                              if extraction_root not in destination.parents and destination != extraction_root:
+                                  raise ValueError(f"Unsafe ZIP member path: {info.filename}")
+                              if info.is_dir():
+                                  destination.mkdir(parents=True, exist_ok=True)
+                              else:
+                                  destination.parent.mkdir(parents=True, exist_ok=True)
+                                  with archive.open(info) as source, destination.open("wb") as output:
+                                      shutil.copyfileobj(source, output)
+                          project_root = next((root for root in find_project_roots(extraction_root) if is_complete(root)), None)
+                          if project_root is not None:
+                              print(f"Project files extracted from: {archive_path}", file=sys.stderr)
+                              break
+                  except (OSError, zipfile.BadZipFile, ValueError) as error:
+                      print(f"Skipping source archive {archive_path}: {error}")
+
+          if project_root is None:
+              print("Could not find the AB Securitas project files.", file=os.sys.stderr)
+              print("Expected Android/, Web/, ClientPC/, MobileApiProxy/, and scripts/ under one project folder.", file=os.sys.stderr)
+              print("Commit the project files, or add the complete fixed ZIP to this repository, then run the workflow again.", file=os.sys.stderr)
+              raise SystemExit(1)
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"project_root={project_root}\n")
+          print(f"Project files found in: {project_root}", file=sys.stderr)
+          print(project_root)
+          PY
+          )"
+          python3 -m compileall -q "$project_root/Web" "$project_root/ClientPC" \
+            "$project_root/MobileApiProxy" "$project_root/scripts"
+          python3 -m pip install --disable-pip-version-check -q -r "$project_root/Web/requirements.txt"
+          test_data_dir="$(mktemp -d)"
+          RTI_DATA_DIR="$test_data_dir/data" RTI_BACKUP_DIR="$test_data_dir/backups" \
+            RTI_SECRET_KEY="ci-filter-validation-only" PYTHONPATH="$project_root/Web" \
+            python3 -m unittest discover -s "$project_root/tests" -p 'test_*.py' -v
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: "9.4.1"
+          cache-provider: basic
+
+      - name: Prepare persistent APK signing key when configured
+        env:
+          RTI_ANDROID_KEYSTORE_BASE64: ${{ secrets.RTI_ANDROID_KEYSTORE_BASE64 }}
+          RTI_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.RTI_ANDROID_KEYSTORE_PASSWORD }}
+          RTI_ANDROID_KEY_ALIAS: ${{ secrets.RTI_ANDROID_KEY_ALIAS }}
+          RTI_ANDROID_KEY_PASSWORD: ${{ secrets.RTI_ANDROID_KEY_PASSWORD }}
+        run: |
+          if [[ -z "$RTI_ANDROID_KEYSTORE_BASE64" ]]; then
+            echo "No persistent signing key configured; using the runner debug key. Configure RTI_ANDROID_KEYSTORE_* repository secrets to keep the APK update signature stable."
+            exit 0
+          fi
+          if [[ -z "$RTI_ANDROID_KEYSTORE_PASSWORD" || -z "$RTI_ANDROID_KEY_ALIAS" || -z "$RTI_ANDROID_KEY_PASSWORD" ]]; then
+            echo "A persistent keystore requires RTI_ANDROID_KEYSTORE_PASSWORD, RTI_ANDROID_KEY_ALIAS, and RTI_ANDROID_KEY_PASSWORD secrets." >&2
+            exit 1
+          fi
+          keystore_path="$RUNNER_TEMP/rti-release-signing.jks"
+          printf '%s' "$RTI_ANDROID_KEYSTORE_BASE64" | base64 --decode > "$keystore_path"
+          chmod 600 "$keystore_path"
+          {
+            printf 'RTI_ANDROID_KEYSTORE_PATH=%s\n' "$keystore_path"
+            printf 'RTI_ANDROID_KEYSTORE_PASSWORD=%s\n' "$RTI_ANDROID_KEYSTORE_PASSWORD"
+            printf 'RTI_ANDROID_KEY_ALIAS=%s\n' "$RTI_ANDROID_KEY_ALIAS"
+            printf 'RTI_ANDROID_KEY_PASSWORD=%s\n' "$RTI_ANDROID_KEY_PASSWORD"
+          } >> "$GITHUB_ENV"
+
+      - name: Build debug APK
+        env:
+          PROJECT_ROOT: ${{ steps.validate.outputs.project_root }}
+        run: |
+          cd "$PROJECT_ROOT/Android"
+          gradle --no-daemon --stacktrace \
+            :app:assembleDebug
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: AB-Securitas-Real-Time-Inspector-APK
+          path: ${{ steps.validate.outputs.project_root }}/Android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
