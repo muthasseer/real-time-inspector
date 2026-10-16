@@ -66,7 +66,7 @@ jobs:
               archives = sorted(
                   (item for item in workspace.rglob("*")
                    if item.is_file() and item.suffix.lower() == ".zip" and ".git" not in item.parts),
-                  key=lambda item: (item.name.lower() != "ab_securitas_rti_master_v22_qr_scanner_fix.zip", item.name.lower()),
+              key=lambda item: (item.name.lower() != "ab_securitas_rti_master_v23_offline_sync_admin_fixes.zip", item.name.lower()),
               )
               for archive_path in archives:
                   try:
